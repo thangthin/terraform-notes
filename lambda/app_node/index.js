@@ -1,5 +1,4 @@
 const AWS = require('aws-sdk');
-//*/ get reference to S3 client 
 const s3 = new AWS.S3();
 
 exports.handler = async (event, context) => {
