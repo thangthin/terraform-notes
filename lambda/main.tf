@@ -1,83 +1,33 @@
 provider "aws" {
-    region = "us-east-1"
-}
-data "archive_file" "init" {
-  type        = "zip"
-  source_dir = "app_node"
-  output_path = "function.zip"
+  region = "us-east-1"
 }
 
-data "aws_iam_role" "s3_reader" {
-  name = "s3-tmt-pictures-readers"
+data "aws_lambda_function" "get_picture_lambda" {
+    function_name = "getPicture"
 }
 
-resource "aws_lambda_function" "get_picture_lambda" {
-    filename         = "${data.archive_file.init.output_path}"
-    function_name    = "get_picture_lambda"
-    role             = "${data.aws_iam_role.s3_reader.arn}"
-    handler          = "index.handler"
-    source_code_hash = "${base64sha256(file("${data.archive_file.init.output_path}"))}"
-    runtime          = "nodejs8.10"
+resource "aws_lambda_function" "example" {
+  function_name = "ServerlessExample"
+
+  # The bucket name as created earlier with "aws s3api create-bucket"
+  s3_bucket = "tmt-terraform-serverless-example"
+  s3_key    = "v1.0.0/example.zip"
+
+  # "main" is the filename within the zip file (main.js) and "handler"
+  # is the name of the property under which the handler function was
+  # exported in that file.
+  handler = "main.handler"
+  runtime = "nodejs6.10"
+
+  role = "${aws_iam_role.lambda_exec.arn}"
 }
 
+# IAM role which dictates what other AWS services the Lambda function
+# may access.
+resource "aws_iam_role" "lambda_exec" {
+  name = "serverless_example_lambda"
 
-# Variables
-variable "myregion" {}
-
-variable "accountId" {}
-
-# API Gateway
-resource "aws_api_gateway_rest_api" "api" {
-  name = "myapi"
-}
-
-resource "aws_api_gateway_resource" "picture" {
-  path_part   = "picture"
-  parent_id   = "${aws_api_gateway_rest_api.api.root_resource_id}"
-  rest_api_id = "${aws_api_gateway_rest_api.api.id}"
-}
-
-resource "aws_api_gateway_method" "method" {
-  rest_api_id   = "${aws_api_gateway_rest_api.api.id}"
-  resource_id   = "${aws_api_gateway_resource.picture.id}"
-  http_method   = "GET"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "integration" {
-  rest_api_id             = "${aws_api_gateway_rest_api.api.id}"
-  resource_id             = "${aws_api_gateway_resource.resource.id}"
-  http_method             = "${aws_api_gateway_method.method.http_method}"
-  integration_http_method = "POST"
-  type                    = "AWS_PROXY"
-  uri                     = "arn:aws:apigateway:${var.myregion}:lambda:path/2015-03-31/functions/${aws_lambda_function.lambda.arn}/invocations"
-}
-
-# Lambda
-resource "aws_lambda_permission" "apigw_lambda" {
-  statement_id  = "AllowExecutionFromAPIGateway"
-  action        = "lambda:InvokeFunction"
-  function_name = "${aws_lambda_function.lambda.arn}"
-  principal     = "apigateway.amazonaws.com"
-
-  # More: http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-control-access-using-iam-policies-to-invoke-api.html
-  source_arn = "arn:aws:execute-api:${var.myregion}:${var.accountId}:${aws_api_gateway_rest_api.api.id}/*/${aws_api_gateway_method.method.http_method} ${aws_api_gateway_resource.resource.path}"
-}
-
-resource "aws_lambda_function" "lambda" {
-  filename         = "lambda.zip"
-  function_name    = "mylambda"
-  role             = "${aws_iam_role.role.arn}"
-  handler          = "lambda.lambda_handler"
-  runtime          = "python2.7"
-  source_code_hash = "${base64sha256(file("lambda.zip"))}"
-}
-
-# IAM
-resource "aws_iam_role" "role" {
-  name = "myrole"
-
-  assume_role_policy = <<POLICY
+  assume_role_policy = <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -91,6 +41,90 @@ resource "aws_iam_role" "role" {
     }
   ]
 }
-POLICY
+EOF
 }
 
+resource "aws_api_gateway_rest_api" "example" {
+  name        = "ServerlessExample"
+  description = "Terraform Serverless Application Example"
+  binary_media_types = ["*/*"]
+}
+
+
+resource "aws_api_gateway_resource" "proxy" {
+  rest_api_id = "${aws_api_gateway_rest_api.example.id}"
+  parent_id   = "${aws_api_gateway_rest_api.example.root_resource_id}"
+  path_part   = "{proxy+}"
+}
+
+resource "aws_api_gateway_method" "proxy" {
+  rest_api_id   = "${aws_api_gateway_rest_api.example.id}"
+  resource_id   = "${aws_api_gateway_resource.proxy.id}"
+  http_method   = "ANY"
+  authorization = "NONE"
+}
+
+
+resource "aws_api_gateway_integration" "lambda" {
+  rest_api_id = "${aws_api_gateway_rest_api.example.id}"
+  resource_id = "${aws_api_gateway_method.proxy.resource_id}"
+  http_method = "${aws_api_gateway_method.proxy.http_method}"
+
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = "${data.aws_lambda_function.get_picture_lambda.invoke_arn}" #aws_lambda_function.example.invoke_arn
+}
+
+resource "aws_api_gateway_method" "proxy_root" {
+  rest_api_id   = "${aws_api_gateway_rest_api.example.id}"
+  resource_id   = "${aws_api_gateway_rest_api.example.root_resource_id}"
+  http_method   = "ANY"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "lambda_root" {
+  rest_api_id = "${aws_api_gateway_rest_api.example.id}"
+  resource_id = "${aws_api_gateway_method.proxy_root.resource_id}"
+  http_method = "${aws_api_gateway_method.proxy_root.http_method}"
+
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = "${data.aws_lambda_function.get_picture_lambda.invoke_arn}" #aws_lambda_function.example.invoke_arn
+}
+
+resource "aws_api_gateway_integration_response" "MyDemoIntegrationResponse" {
+  rest_api_id = "${aws_api_gateway_rest_api.example.id}"
+  resource_id = "${aws_api_gateway_resource.proxy.id}"
+  http_method = "${aws_api_gateway_method.proxy.http_method}"
+  status_code = "200"
+
+  content_handling= "CONVERT_TO_BINARY"
+  depends_on = [
+      "aws_api_gateway_integration.lambda",
+      "aws_api_gateway_integration.lambda_root",
+  ]
+}
+
+resource "aws_api_gateway_deployment" "example" {
+  depends_on = [
+    "aws_api_gateway_integration.lambda",
+    "aws_api_gateway_integration.lambda_root",
+  ]
+
+  rest_api_id = "${aws_api_gateway_rest_api.example.id}"
+  stage_name  = "test"
+}
+
+resource "aws_lambda_permission" "apigw" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = "${data.aws_lambda_function.get_picture_lambda.function_name}" #aws_lambda_function.example.arn
+  principal     = "apigateway.amazonaws.com"
+
+  # The /*/* portion grants access from any method on any resource
+  # within the API Gateway "REST API".
+  source_arn = "${aws_api_gateway_deployment.example.execution_arn}/*/*"
+}
+output "base_url" {
+  value = "${aws_api_gateway_deployment.example.invoke_url}"
+}
